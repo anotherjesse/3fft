@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>three.js webgl - buffer geometry custom attributes - particles</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <link type="text/css" rel="stylesheet" href="./examples/main.css">
+</head>
+
+<body>
+    <div id="container"></div>
+    <div id="info">using microphone and threejs to visualize fft / audio | <a href="https://github.com/anotherjesse/3fft">code</a> <br>
+based on <a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> webgl - buffergeometry
+        custom attributes - particles</div>
+
+    <script type="x-shader/x-vertex" id="vertexshader">
+
+			attribute float size;
+			varying vec3 vColor;
+
+			void main() {
+				vColor = color;
+				vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+				gl_PointSize = size * ( 300.0 / -mvPosition.z ) * 0.2;
+				gl_Position = projectionMatrix * mvPosition;
+			}
+
+		</script>
+
+    <script type="x-shader/x-fragment" id="fragmentshader">
+
+			uniform sampler2D pointTexture;
+
+			varying vec3 vColor;
+
+			void main() {
+
+				gl_FragColor = vec4( vColor, 1.0 );
+
+				gl_FragColor = gl_FragColor * texture2D( pointTexture, gl_PointCoord );
+
+			}
+
+		</script>
+
+    <script type="module">
+
+        import * as THREE from './build/three.module.js';
+
+        import Stats from './examples/jsm/libs/stats.module.js';
+        import { VRButton } from './examples/jsm/webxr/VRButton.js';
+        import { SimplexNoise } from './examples/jsm/math/SimplexNoise.js';
+
+        let renderer, scene, camera, stats;
+        let controller1, controller2;
+        let noise;
+        let stream;
+
+        let particleSystem, uniforms, geometry;
+        let floatTimeDomainData, byteFrequencyData, analyserNode, dataArray
+
+        const particles = 100000;
+
+        init();
+        animate();
+
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+            .then((s) => {
+                stream = s;
+                let audioContext = new AudioContext()
+
+                let mediaStreamSourceNode = audioContext.createMediaStreamSource(stream)
+
+                analyserNode = audioContext.createAnalyser()
+                analyserNode.fftSize = 4096 * 2
+                const bufferLength = analyserNode.frequencyBinCount;
+                dataArray = new Float32Array(bufferLength);
+                console.log(bufferLength)
+                mediaStreamSourceNode.connect(analyserNode)
+
+                floatTimeDomainData = new Float32Array(analyserNode.fftSize)
+                byteFrequencyData = new Uint8Array(analyserNode.fftSize)
+            })
+
+        window.updater = () => {
+            if (analyserNode && floatTimeDomainData) {
+                analyserNode.getFloatTimeDomainData(floatTimeDomainData)
+                analyserNode.getByteFrequencyData(byteFrequencyData)
+                analyserNode.getFloatFrequencyData(dataArray);
+            }
+        }
+
+        function init() {
+
+            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 10000);
+            camera.position.z = 300;
+
+            scene = new THREE.Scene();
+
+            uniforms = {
+
+                pointTexture: { value: new THREE.TextureLoader().load("./examples/textures/sprites/spark1.png") }
+
+            };
+
+            const shaderMaterial = new THREE.ShaderMaterial({
+
+                uniforms: uniforms,
+                vertexShader: document.getElementById('vertexshader').textContent,
+                fragmentShader: document.getElementById('fragmentshader').textContent,
+
+                blending: THREE.AdditiveBlending,
+                depthTest: false,
+                transparent: true,
+                vertexColors: true
+
+            });
+
+
+            const radius = 200;
+
+            geometry = new THREE.BufferGeometry();
+
+            const positions = [];
+            const colors = [];
+            const sizes = [];
+
+            noise = new SimplexNoise();
+            const color = new THREE.Color();
+
+            for (let i = 0; i < particles; i++) {
+
+                positions.push((Math.random() * 2 - 1) * radius);
+                positions.push((Math.random() * 2 - 1) * radius);
+                positions.push((Math.random() * 2 - 1) * radius);
+
+                color.setHSL(i / particles, 1.0, 0.5);
+
+                colors.push(color.r, color.g, color.b);
+
+                sizes.push(20);
+
+            }
+
+            function initSphere(n, R) {
+                let gAngle = Math.PI * (3 - Math.sqrt(5));
+                let r, theta;
+                for (var i = 0; i < n; i++) {
+                    theta = gAngle * (i + 1);
+                    r = R * Math.sqrt((i + 1) / n);
+
+                    positions[i * 3 + 0] = r * Math.cos(theta);
+                    positions[i * 3 + 1] = r * Math.sin(theta);
+                }
+            }
+
+
+            initSphere(4096, 30)
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.Float32BufferAttribute(sizes, 1).setUsage(THREE.DynamicDrawUsage));
+
+            particleSystem = new THREE.Points(geometry, shaderMaterial);
+
+            scene.add(particleSystem);
+
+            renderer = new THREE.WebGLRenderer();
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true
+
+            const container = document.getElementById('container');
+            container.appendChild(renderer.domElement);
+
+            stats = new Stats();
+            container.appendChild(stats.dom);
+
+            document.body.appendChild(VRButton.createButton(renderer));
+
+            window.addEventListener('resize', onWindowResize);
+
+            controller1 = renderer.xr.getController(0);
+            scene.add(controller1)
+            controller2 = renderer.xr.getController(1);
+            scene.add(controller2)
+        }
+
+        function onWindowResize() {
+
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(window.innerWidth, window.innerHeight);
+
+        }
+
+        function animate() {
+
+            renderer.setAnimationLoop(render);
+
+        }
+
+        function render() {
+            stats.update();
+
+            const qty = 250;
+
+            const time = Date.now() * 0.005;
+
+            const sizes = geometry.attributes.size.array;
+            const positions = geometry.attributes.position.array;
+
+            if (floatTimeDomainData) {
+                updater()
+
+
+                for (let i = 0; i < 4096; i++) {
+                    positions[i * 3 + 2] = byteFrequencyData[i] / 10 - 30
+                    // positions[i * 3 + 2] = dataArray[i] / 20 - 5
+                }
+            }
+            // for (let i = 0; i < qty; i++) {
+            //     positions[i * 3] = controller1.position.x + 0.2 * noise.noise3d(i / 100, 1, 2, time / 10)
+            //     positions[i * 3 + 1] = controller1.position.y + 0.2 * noise.noise3d(i / 100, 3, time / 10, 1)
+            //     positions[i * 3 + 2] = controller1.position.z + 0.2 * noise.noise3d(i / 100, time / 10, 1 / 10, 2)
+            //     sizes[i] = 0.5 * (1 + Math.sin(0.1 * i + time));
+            // }
+
+            // for (let i = qty; i < qty * 2; i++) {
+            //     positions[i * 3] = controller2.position.x + 0.2 * noise.noise3d(i / 100, time / 10, 8, 7)
+            //     positions[i * 3 + 1] = controller2.position.y + 0.2 * noise.noise3d(i / 100, 1, time / 10, 6)
+            //     positions[i * 3 + 2] = controller2.position.z + 0.2 * noise.noise3d(i / 100, 8, 1, time / 10)
+            //     sizes[i] = 0.5 * (1 + Math.sin(0.1 * i + time));
+            // }
+
+            // for (let i = qty * 2; i < particles; i++) {
+            //     sizes[i] = 10 * (1 + Math.sin(0.1 * i + time));
+            // }
+
+            geometry.setDrawRange(0, 4095)
+
+            geometry.attributes.size.needsUpdate = true
+            geometry.attributes.position.needsUpdate = true
+
+            renderer.render(scene, camera);
+
+        }
+
+    </script>
+
+</body>
+
+</html>
